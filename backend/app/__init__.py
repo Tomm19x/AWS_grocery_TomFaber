@@ -4,7 +4,7 @@ import tempfile
 import zipfile
 from logging.handlers import RotatingFileHandler
 import os
-import socket
+from urllib.parse import quote_plus
 from flask import Flask, send_from_directory, render_template, request
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
@@ -19,58 +19,65 @@ from dateutil import parser
 load_dotenv()
 db = SQLAlchemy()
 
+# ------- Frontend Build (GitHub Release) -------
 DEPLOYMENT_ENV = os.getenv("DEPLOYMENT_ENV", "local")
 GITHUB_USERNAME = "AlejandroRomanIbanez"
 REPO_NAME = "AWS_grocery"
 FRONTEND_BUILD_ZIP = "frontend-build.zip"
-FRONTEND_BUILD_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../frontend/build"))
+FRONTEND_BUILD_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "../../frontend/build")
+)
 TMP_ZIP_PATH = os.path.join(tempfile.gettempdir(), "frontend-build.zip")
-GITHUB_RELEASE_URL = f"https://github.com/{GITHUB_USERNAME}/{REPO_NAME}/releases/latest/download/{FRONTEND_BUILD_ZIP}"
+GITHUB_RELEASE_URL = (
+    f"https://github.com/{GITHUB_USERNAME}/{REPO_NAME}/releases/latest/download/{FRONTEND_BUILD_ZIP}"
+)
 
 
 class Config:
-    """App configuration variables."""
-    POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
-    POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
-    POSTGRES_DB = os.getenv("POSTGRES_DB", "postgres")
-    POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres")
+    """Base app configuration."""
+    # DB-Parameter kommen aus ENV; keine lokale Fallback-URI mit localhost!
+    POSTGRES_USER = os.getenv("POSTGRES_USER", "")
+    POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "")
+    POSTGRES_DB = os.getenv("POSTGRES_DB", "")
+    POSTGRES_HOST = os.getenv("POSTGRES_HOST", "")
     POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
 
-    POSTGRES_URI = os.getenv("POSTGRES_URI", "postgresql://postgres:postgres@localhost:5432/postgres")
-
-    if not POSTGRES_URI:
-        raise ValueError("POSTGRES_URI environment variable is not set.")
-
-    @classmethod
-    def is_rds(cls):
-        """Check if using AWS RDS by detecting an external hostname."""
-        rds_hostnames = ["rds.amazonaws.com", "amazonaws.com"]
-        return any(h in cls.POSTGRES_URI for h in rds_hostnames)
-
-    @classmethod
-    def is_local_postgres(cls):
-        """Check if 'postgres' resolves to a local Docker container."""
-        return not cls.is_rds()
-
-    SQLALCHEMY_DATABASE_URI = POSTGRES_URI
-    print(f"Using Database: {SQLALCHEMY_DATABASE_URI}")
-
+    # SQLAlchemy wird in create_app() mit einer dynamisch gebauten URI versorgt
+    SQLALCHEMY_DATABASE_URI = ""
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+
+    JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "change-me")
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=4)
 
 
-def detect_environment():
-    if Config.is_rds():
-        print("Running on AWS RDS (Production)")
-    elif Config.is_local_postgres():
-        print("Running in Local Docker PostgreSQL")
-    else:
-        print("Could not detect database environment. Set POSTGRES_URI manually.")
-    print(f"Using Database: {Config.SQLALCHEMY_DATABASE_URI}")
+def _build_db_uri_from_env() -> str:
+    """Baut eine PostgreSQL-URI aus ENV-Variablen und erzwingt SSL für RDS."""
+    user = os.getenv("POSTGRES_USER", "")
+    pw = os.getenv("POSTGRES_PASSWORD", "")
+    host = os.getenv("POSTGRES_HOST", "")
+    dbn = os.getenv("POSTGRES_DB", "")
+    port = os.getenv("POSTGRES_PORT", "5432")
+
+    missing = [k for k, v in {
+        "POSTGRES_USER": user,
+        "POSTGRES_PASSWORD": pw,
+        "POSTGRES_HOST": host,
+        "POSTGRES_DB": dbn,
+    }.items() if not v]
+    if missing:
+        raise RuntimeError(f"Missing DB env vars: {', '.join(missing)}")
+
+    pw_q = quote_plus(pw)
+    uri = f"postgresql+psycopg2://{user}:{pw_q}@{host}:{port}/{dbn}"
+    if "rds.amazonaws.com" in host and "sslmode=" not in uri:
+        uri += "?sslmode=require"
+    return uri
 
 
-detect_environment()
+def _detect_environment(db_uri: str) -> str:
+    if "rds.amazonaws.com" in db_uri:
+        return "AWS RDS (Production)"
+    return "Local/Custom PostgreSQL"
 
 
 def fetch_frontend():
@@ -91,60 +98,45 @@ def fetch_frontend():
         print("Frontend build not found. Fetching the latest version...")
 
     try:
-        response = requests.get(GITHUB_RELEASE_URL, stream=True)
+        response = requests.get(GITHUB_RELEASE_URL, stream=True, timeout=60)
         if response.status_code == 200:
-            # Save the zip file
             with open(TMP_ZIP_PATH, "wb") as f:
                 f.write(response.content)
 
-            # Ensure frontend directory exists
             frontend_dir = os.path.dirname(FRONTEND_BUILD_PATH)
             os.makedirs(frontend_dir, exist_ok=True)
 
-            # Create temporary extraction directory
             temp_extract_path = os.path.join(frontend_dir, "temp_extract")
             shutil.rmtree(temp_extract_path, ignore_errors=True)
             os.makedirs(temp_extract_path)
 
-            # First, extract to temp directory
             with zipfile.ZipFile(TMP_ZIP_PATH, 'r') as zip_ref:
                 zip_ref.extractall(temp_extract_path)
 
-            # Clear existing build directory if it exists
             if os.path.exists(FRONTEND_BUILD_PATH):
                 shutil.rmtree(FRONTEND_BUILD_PATH)
-
-            # Create fresh build directory
             os.makedirs(FRONTEND_BUILD_PATH)
 
-            # Determine source of files
             if os.path.exists(os.path.join(temp_extract_path, "build", "index.html")):
-                # Files are in a build subdirectory
                 source_dir = os.path.join(temp_extract_path, "build")
                 print("Found build directory in zip, using its contents")
             elif os.path.exists(os.path.join(temp_extract_path, "index.html")):
-                # Files are at root
                 source_dir = temp_extract_path
                 print("Found files at root of zip, moving them to build directory")
             else:
                 raise Exception("Could not find index.html in the extracted content")
 
-            # Copy everything to build directory
             for item in os.listdir(source_dir):
-                source = os.path.join(source_dir, item)
-                dest = os.path.join(FRONTEND_BUILD_PATH, item)
-                if os.path.isdir(source):
-                    shutil.copytree(source, dest)
+                src = os.path.join(source_dir, item)
+                dst = os.path.join(FRONTEND_BUILD_PATH, item)
+                if os.path.isdir(src):
+                    shutil.copytree(src, dst)
                 else:
-                    shutil.copy2(source, dest)
+                    shutil.copy2(src, dst)
 
-            print("Frontend files successfully moved to build directory")
-
-            # Verify the build directory has expected files
             if not os.path.exists(os.path.join(FRONTEND_BUILD_PATH, "index.html")):
                 raise Exception("Failed to find index.html in final build directory")
 
-            # Clean up
             shutil.rmtree(temp_extract_path, ignore_errors=True)
             os.remove(TMP_ZIP_PATH)
 
@@ -153,22 +145,19 @@ def fetch_frontend():
             print(f"Failed to download frontend build. Status Code: {response.status_code}")
     except Exception as e:
         print(f"Error fetching frontend: {e}")
-        # Clean up on error
         if 'temp_extract_path' in locals():
             shutil.rmtree(temp_extract_path, ignore_errors=True)
         if os.path.exists(TMP_ZIP_PATH):
             os.remove(TMP_ZIP_PATH)
-        # Keep existing build if update fails
+        # Fehler weiterreichen, damit der Container-Start sichtbar fehlschlägt
         raise
 
 
 def get_github_release_timestamp():
-    """
-    Fetches the timestamp of the latest frontend release from GitHub.
-    """
+    """Fetches the timestamp of the latest frontend release from GitHub."""
     release_api_url = f"https://api.github.com/repos/{GITHUB_USERNAME}/{REPO_NAME}/releases/latest"
     try:
-        response = requests.get(release_api_url)
+        response = requests.get(release_api_url, timeout=15)
         if response.status_code == 200:
             timestamp_iso = response.json().get("published_at")
             if timestamp_iso:
@@ -179,9 +168,7 @@ def get_github_release_timestamp():
 
 
 def get_local_build_timestamp():
-    """
-    Retrieves the timestamp of the local frontend build.
-    """
+    """Retrieves the timestamp of the local frontend build."""
     try:
         return os.path.getmtime(FRONTEND_BUILD_PATH)
     except Exception:
@@ -189,27 +176,43 @@ def get_local_build_timestamp():
 
 
 def create_app():
-    """
-    Creates and configures the Flask app.
-    """
-    fetch_frontend()
+    """Creates and configures the Flask app."""
+    # Frontend aus GitHub Releases beziehen (optional im Container)
+    try:
+        fetch_frontend()
+    except Exception as e:
+        # Im Zweifel die App trotzdem starten, wenn bereits ein Build vorhanden ist
+        print(f"Frontend fetch warning: {e}")
 
-    app = Flask(__name__,
-                static_folder="../../frontend/build/static",
-                template_folder=os.path.join(os.path.dirname(__file__), "../../frontend/build"))
+    app = Flask(
+        __name__,
+        static_folder="../../frontend/build/static",
+        template_folder=os.path.join(os.path.dirname(__file__), "../../frontend/build"),
+    )
     CORS(app, resources={r"/*": {"origins": "*"}})
+
+    # --- DB-Verbindung dynamisch bauen & loggen ---
+    db_uri = _build_db_uri_from_env()
     app.config.from_object(Config)
+    app.config["SQLALCHEMY_DATABASE_URI"] = db_uri
+
+    # Sichere Logausgabe ohne Passwort
+    pw_plain = os.getenv("POSTGRES_PASSWORD", "")
+    safe_uri = db_uri.replace(quote_plus(pw_plain), "****") if pw_plain else db_uri
+    app.logger.info(f"Using Database: {safe_uri}")
+    app.logger.info(f"Environment: {_detect_environment(db_uri)}")
 
     db.init_app(app)
 
     with app.app_context():
-        if app.config['SQLALCHEMY_DATABASE_URI'].startswith('sqlite'):
-            db.session.execute(text('PRAGMA foreign_keys=ON'))
+        if app.config["SQLALCHEMY_DATABASE_URI"].startswith("sqlite"):
+            db.session.execute(text("PRAGMA foreign_keys=ON"))
 
     JWTManager(app)
     Migrate(app, db)
     setup_logging(app)
 
+    # --- Blueprints registrieren ---
     from .routes.auth_routes import auth_bp
     from .routes.user_routes import user_bp
     from .routes.product_routes import product_bp
@@ -222,11 +225,12 @@ def create_app():
     app.register_blueprint(health_bp)
     app.register_blueprint(config_bp)
 
+    # --- Static/Index Serving für React ---
     def inject_backend_url():
-        """Get the backend URL based on the current request, works dynamically in all environments."""
-        proto = request.headers.get('X-Forwarded-Proto', request.scheme)
-        host = request.headers.get('X-Forwarded-Host', request.host)
-        print(f"Resolved URL - Proto: {proto}, Host: {host}")
+        """Ermittelt die Backend-URL dynamisch (ALB/Reverse Proxy kompatibel)."""
+        proto = request.headers.get("X-Forwarded-Proto", request.scheme)
+        host = request.headers.get("X-Forwarded-Host", request.host)
+        app.logger.debug(f"Resolved URL - Proto: {proto}, Host: {host}")
         return f"{proto}://{host}"
 
     @app.route("/", defaults={"path": ""})
@@ -236,30 +240,19 @@ def create_app():
             return send_from_directory(app.static_folder, path)
         else:
             backend_url = inject_backend_url()
-            return render_template(
-                "index.html",
-                backend_url=backend_url
-            )
+            return render_template("index.html", backend_url=backend_url)
 
     return app
 
 
-def setup_logging(app):
-    """
-    Set up logging to a file, creating the log file if it doesn't exist.
-    Logs will rotate when they reach a certain size.
-    """
-    if not os.path.exists('logs'):
-        os.mkdir('logs')
-
-    log_file = 'logs/app.log'
+def setup_logging(app: Flask):
+    """Set up rotating file logging."""
+    os.makedirs("logs", exist_ok=True)
+    log_file = "logs/app.log"
 
     file_handler = RotatingFileHandler(log_file, maxBytes=1024 * 1024, backupCount=5)
     file_handler.setLevel(logging.INFO)
-
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
     file_handler.setFormatter(formatter)
 
     app.logger.addHandler(file_handler)
