@@ -1,0 +1,20 @@
+# AWS_grocery/backend/seed/Dockerfile.seed
+
+# 1) Basic image
+FROM amazonlinux:2023
+
+# 2) Tools (awscli + psql)
+RUN dnf -y install awscli postgresql15 && dnf clean all
+
+# 3) Working directory in container
+WORKDIR /app
+
+# 4) Entrypoint script (needs to be in building kontext -> seed/)
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# 5) (Optional) more seed files:
+# COPY seeds/ ./seeds/
+
+# 6) Start
+ENTRYPOINT ["/entrypoint.sh"]
