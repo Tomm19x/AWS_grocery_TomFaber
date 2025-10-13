@@ -6,34 +6,23 @@ Using Terraform and Shell scripts, this configuration automatically sets up the 
 To deploy, the user simply runs the deploy.sh script in the backend directory. After signing in to AWS and providing the database password and JWT secret key, the deployment process runs fully automatically.
 Prerequisites and a detailed explanation of the created infrastructure and deployment process follows below.
 
-                     ┌──────────────┐
-   Developer Push    │   ECR (App)  │
-  ─────────────────▶ │   ECR (Seed) │
-   docker build/push └─────┬────────┘
-                           │
-        ┌──────────────────┴────────────────────┐
-        │                                       │
-   ┌────▼────┐                             ┌────▼────┐
-   │  ALB    │  Internet Traffic           │  ECS    │
-   │ (HTTP)  │ ──────────────────────────▶ │ Service │ (App Tasks)
-   └────┬────┘                             └────┬────┘
-        │                                       │
-        │            ┌─────────────┐            │
-        └──────────▶ │ TargetGroup │◀───────────┘
-                     └─────────────┘
-                            │
-                            ▼
-                  ┌─────────────────────┐
-                  │   ECS Seed Task     │───▶ Downloads SQL from S3
-                  └──────────┬──────────┘
-                             │
-                   ┌─────────▼─────────┐
-                   │    Amazon RDS     │ (PostgreSQL)
-                   └───────────────────┘
-                             │
-                    ┌────────▼─────────┐
-                    │   Amazon S3      │ (SQL dump storage)
-                    └──────────────────┘
+Developer Push        ──▶  ECR (App)
+      │                     │
+      │                     └─▶  docker build/push
+      ▼
+ALB (HTTP)  ◀── Internet Traffic ──▶  ECS Service (App Tasks)
+      │
+      ▼
+TargetGroup
+      │
+      ▼
+ECS Seed Task ──▶ Downloads SQL from S3
+      │
+      ▼
+Amazon RDS (PostgreSQL)
+      │
+      ▼
+Amazon S3 (SQL dump storage)
 
 
 ## 2. Prerequisites
