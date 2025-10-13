@@ -1,175 +1,179 @@
-# GroceryMate
+# AWS Grocery Store Deployment Automation
 
-## 🏆 GroceryMate E-Commerce Platform
+## 1. Overwiev
+This project extends the “AWS_grocery” application by Alejandro Roman Ibanez from Masterschool (many thanks for allowing me to use his work!). The app is a grocery store with an integrated database.
+Using Terraform and Shell scripts, this configuration automatically sets up the entire AWS infrastructure required for the Grocery Store web application.
+To deploy, the user simply runs the deploy.sh script in the backend directory. After signing in to AWS and providing the database password and JWT secret key, the deployment process runs fully automatically.
+Prerequisites and a detailed explanation of the created infrastructure and deployment process follows below.
 
-[![Python](https://img.shields.io/badge/Language-Python%2C%20JavaScript-blue)](https://www.python.org/)
-[![OS](https://img.shields.io/badge/OS-Linux%2C%20Windows%2C%20macOS-green)](https://www.kernel.org/)
-[![Database](https://img.shields.io/badge/Database-PostgreSQL-336791)](https://www.postgresql.org/)
-[![GitHub Release](https://img.shields.io/github/v/release/AlejandroRomanIbanez/AWS_grocery)](https://github.com/AlejandroRomanIbanez/AWS_grocery/releases/tag/v2.0.0)
-[![Free](https://img.shields.io/badge/Free_for_Non_Commercial_Use-brightgreen)](#-license)
-
-⭐ **Star us on GitHub** — it motivates us a lot!
-
----
-
-## 📌 Table of Contents
-
-- [Overview](#-overview)
-- [Features](#-features)
-- [Screenshots & Demo](#-screenshots--demo)
-- [Prerequisites](#-prerequisites)
-- [Installation](#-installation)
-  - [Clone Repository](#-clone-repository)
-  - [Configure PostgreSQL](#-configure-postgresql)
-  - [Populate Database](#-populate-database)
-  - [Set Up Python Environment](#-set-up-python-environment)
-  - [Set Environment Variables](#-set-environment-variables)
-  - [Start the Application](#-start-the-application)
-- [Usage](#-usage)
-- [Contributing](#-contributing)
-- [License](#-license)
-
-## 🚀 Overview
-
-GroceryMate is an application developed as part of the Masterschools program by **Alejandro Roman Ibanez**. It is a modern, full-featured e-commerce platform designed for seamless online grocery shopping. It provides an intuitive user interface and a secure backend, allowing users to browse products, manage their shopping basket, and complete purchases efficiently.
-
-GroceryMate is a modern, full-featured e-commerce platform designed for seamless online grocery shopping. It provides an intuitive user interface and a secure backend, allowing users to browse products, manage their shopping basket, and complete purchases efficiently.
-
-## 🛒 Features
-
-- **🛡️ User Authentication**: Secure registration, login, and session management.
-- **🔒 Protected Routes**: Access control for authenticated users.
-- **🔎 Product Search & Filtering**: Browse products, apply filters, and sort by category or price.
-- **⭐ Favorites Management**: Save preferred products.
-- **🛍️ Shopping Basket**: Add, view, modify, and remove items.
-- **💳 Checkout Process**:
-  - Secure billing and shipping information handling.
-  - Multiple payment options.
-  - Automatic total price calculation.
-
-## 📸 Screenshots & Demo
-
-![imagen](https://github.com/user-attachments/assets/ea039195-67a2-4bf2-9613-2ee1e666231a)
-![imagen](https://github.com/user-attachments/assets/a87e5c50-5a9e-45b8-ad16-2dbff41acd00)
-![imagen](https://github.com/user-attachments/assets/589aae62-67ef-4496-bd3b-772cd32ca386)
-![imagen](https://github.com/user-attachments/assets/2772b85e-81f7-446a-9296-4fdc2b652cb7)
-
-https://github.com/user-attachments/assets/d1c5c8e4-5b16-486a-b709-4cf6e6cce6bc
-
-## 📋 Prerequisites
-
-Ensure the following dependencies are installed before running the application:
-
-- **🐍 Python (>=3.11)**
-- **🐘 PostgreSQL** – Database for storing product and user information.
-- **🛠️ Git** – Version control system.
-
-## ⚙️ Installation
-
-### 🔹 Clone Repository
-
-```sh
-git clone --branch version2 https://github.com/AlejandroRomanIbanez/AWS_grocery.git && cd AWS_grocery
-```
-
-### 🔹 Configure PostgreSQL
-
-Before creating the database user, you can choose a custom username and password to enhance security. Replace `<your_secure_password>` with a strong password of your choice in the following commands.
-
-Create database and user:
-
-```sh
-psql -U postgres -c "CREATE DATABASE grocerymate_db;"
-psql -U postgres -c "CREATE USER grocery_user WITH ENCRYPTED PASSWORD '<your_secure_password>';"  # Replace <your_secure_password> with a strong password of your choice
-psql -U postgres -c "ALTER USER grocery_user WITH SUPERUSER;"
-```
-
-### 🔹 Populate Database
-
-```sh
-psql -U grocery_user -d grocerymate_db -f backend/app/sqlite_dump_clean.sql
-```
-
-Verify insertion:
-
-```sh
-psql -U grocery_user -d grocerymate_db -c "SELECT * FROM users;"
-psql -U grocery_user -d grocerymate_db -c "SELECT * FROM products;"
-```
-
-### 🔹 Set Up Python Environment
+                     ┌──────────────┐
+   Developer Push    │   ECR (App)  │
+  ─────────────────▶ │   ECR (Seed) │
+   docker build/push └─────┬────────┘
+                           │
+        ┌──────────────────┴────────────────────┐
+        │                                       │
+   ┌────▼────┐                             ┌────▼────┐
+   │  ALB    │  Internet Traffic           │  ECS    │
+   │ (HTTP)  │ ──────────────────────────▶ │ Service │ (App Tasks)
+   └────┬────┘                             └────┬────┘
+        │                                       │
+        │            ┌─────────────┐            │
+        └──────────▶ │ TargetGroup │◀───────────┘
+                     └─────────────┘
+                            │
+                            ▼
+                  ┌─────────────────────┐
+                  │   ECS Seed Task     │───▶ Downloads SQL from S3
+                  └──────────┬──────────┘
+                             │
+                   ┌─────────▼─────────┐
+                   │    Amazon RDS     │ (PostgreSQL)
+                   └───────────────────┘
+                             │
+                    ┌────────▼─────────┐
+                    │   Amazon S3      │ (SQL dump storage)
+                    └──────────────────┘
 
 
-Install dependencies in an activated virtual Enviroment:
-
-```sh
-cd backend
-pip install -r requirements.txt
-```
-OR (if pip doesn't exist)
-```sh
-pip3 install -r requirements.txt
-```
-
-### 🔹 Set Environment Variables
-
-Create a `.env` file:
-
-```sh
-touch .env  # macOS/Linux
-ni .env -Force  # Windows
-```
-
-Generate a secure JWT key:
-
-```sh
-python3 -c "import secrets; print(secrets.token_hex(32))"
-```
-
-Update `.env`:
-
-```sh
-nano .env
-```
-
-Fill in the following information (make sure to replace the placeholders):
-
-```ini
-JWT_SECRET_KEY=<your_generated_key>
-POSTGRES_USER=grocery_user
-POSTGRES_PASSWORD=<your_password>
-POSTGRES_DB=grocerymate_db
-POSTGRES_HOST=localhost
-POSTGRES_URI=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:5432/${POSTGRES_DB}
-```
-
-### 🔹 Start the Application
-
-```sh
-python3 run.py
-```
-
-## 📖 Usage
-
-- Access the application at [http://localhost:5000](http://localhost:5000)
-- Register/Login to your account
-- Browse and search for products
-- Manage favorites and shopping basket
-- Proceed through the checkout process
-
-## 🤝 Contributing
-
-We welcome contributions! Please follow these steps:
-
-1. Fork the repository.
-2. Create a new feature branch (`feature/your-feature`).
-3. Implement your changes and commit them.
-4. Push your branch and create a pull request.
-
-## 📜 License
-
-This project is licensed under the MIT License.
+## 2. Prerequisites
+The application is deployed in the AWS region eu-central-1 (Frankfurt).
+Docker Desktop must be installed and running on your system.
+The default database user is set to postgres.
+If you use a different username, make sure to update the variable both in the Shell script (variables section) and in the variables.tf file.
 
 
+## 3. Components:
+ 
+### 3.1 Terraform Configuration
+Terraform code is organized into multiple .tf files for modularity:
 
+main.tf:
+Defines the VPC, subnets, Internet gateway, route tables, security groups, and RDS PostgreSQL instance.
+RDS is configured with user-defined database name, username, and password.
+Security groups control traffic between ALB, ECS, and RDS.
+
+alb.tf:
+Configures an Application Load Balancer, target groups, and listeners.
+Exposes HTTP (port 80) to the public internet.
+Routes requests to ECS tasks on port 5000.
+
+ecs.tf:
+Defines ECS cluster, task definitions, services, and CloudWatch log groups.
+App Task: Runs the GroceryMate application container.
+Seed Task: Runs a one-off container that downloads SQL from S3 and applies it to RDS.
+ECS services are integrated with the ALB.
+
+ecr.tf:
+Creates ECR repositories for the app and seed images.
+
+s3.tf:
+Provisions an S3 bucket (with randomized suffix to avoid collisions).
+Uploads the SQL seed file as an S3 object.
+
+secrets.tf:
+Stores sensitive data in AWS Secrets Manager:
+Database password
+JWT secret for the app
+
+roles.tf:
+IAM roles for ECS tasks and execution:
+Execution role: pull images from ECR, write logs to CloudWatch.
+Task role: retrieve secrets and access S3 seed files.
+variables.tf
+Defines project variables: AWS region, app/seed repo names, DB settings, etc.
+outputs.tf
+Exposes useful values after deployment:
+ALB DNS name
+RDS endpoint
+Database credentials (optional, but not recommended to expose in plaintext)
+
+## 3.2 Docker Containers
+App Image (Dockerfile)
+Based on python:3.12-slim.
+Copies application source code into /app.
+Exposes port 5000.
+Runs python run.py when started.
+Seed Image (Dockerfile.seed)
+Installs awscli and psql.
+Copies entrypoint.sh into container.
+Entrypoint downloads a SQL file from S3 and executes it against RDS using environment variables for DB connection.
+
+## 3.3 Shell Scripts
+deploy.sh
+Automates end-to-end deployment:
+Initializes and applies Terraform (provisioning infra).
+Builds and tags Docker images (app + seed).
+Logs into ECR and pushes images.
+Updates ECS services to use the latest images.
+Optionally triggers the seed task to populate the database.
+entrypoint.sh (Seed)
+Reads environment variables (DB host, user, password, S3 bucket/key).
+Downloads SQL dump from S3.
+Executes SQL commands against the RDS database.
+Deployment Workflow
+Infrastructure Deployment
+Run Terraform to create/update AWS resources:
+cd terraform
+terraform init
+terraform apply -auto-approve
+Build & Push Images
+
+App:
+docker build -t my-python-app:latest -f Dockerfile .
+docker tag my-python-app:latest <account_id>.dkr.ecr.<region>.amazonaws.com/my-python-app:latest
+docker push <account_id>.dkr.ecr.<region>.amazonaws.com/my-python-app:latest
+
+Seed:
+docker build -t gm-seed:latest -f Dockerfile.seed ./seed
+docker tag gm-seed:latest <account_id>.dkr.ecr.<region>.amazonaws.com/gm-seed:latest
+docker push <account_id>.dkr.ecr.<region>.amazonaws.com/gm-seed:latest
+Update ECS Service
+Force a new deployment of the ECS service to pull the new app image:
+aws ecs update-service \
+  --cluster grocerymate-cluster \
+  --service grocerymate-service \
+  --force-new-deployment
+Seed Database (optional)
+Trigger a one-off ECS task using the seed image:
+aws ecs run-task \
+  --cluster grocerymate-cluster \
+  --task-definition gm-seed-task \
+  --launch-type FARGATE \
+  --network-configuration "awsvpcConfiguration={subnets=[...],securityGroups=[...],assignPublicIp=ENABLED}"
+
+
+## 4. Test Application:
+Access the ALB DNS name:
+curl http://<alb_dns_name>/health
+Security Considerations
+RDS Accessibility: Current setup uses a public RDS with restricted IP access.
+Recommended: place RDS in private subnets and allow access only from ECS tasks.
+Secrets Management:
+Prefer injecting database credentials from AWS Secrets Manager into ECS tasks.
+Avoid passing passwords as plain Terraform variables.
+Terraform State:
+Do not commit terraform.tfstate to version control.
+Use a remote backend (S3 + DynamoDB) for state storage and locking.
+HTTPS:
+ALB should terminate TLS using an ACM certificate.
+Redirect HTTP (80) to HTTPS (443).
+Improvements / Future Work
+Add CloudWatch Alarms (RDS CPU/storage, ECS task health, ALB errors).
+Add Auto Scaling for ECS tasks based on CPU/memory.
+Use private subnets for ECS and RDS, public subnets only for ALB.
+Implement CI/CD pipeline (e.g., GitHub Actions, CodePipeline) to automate deploy.sh steps.
+Harden containers with non-root users, health checks, and smaller base images.
+
+
+## 5. Additional Information
+In a future version, the deployment region could be made selectable by the user.
+This could be achieved by integrating a Python script that is called within the Shell deployment script, allowing deployments to any region.
+
+
+## 6. Troubleshooting
+If the deployment fails due to incorrect input (e.g., wrong database credentials or DB username), run the following command inside the Terraform directory:
+"terraform destroy"
+If your SSH session has expired, log in again before executing the command.
+After destroying the infrastructure, make sure to manually delete any remaining S3 bucket contents via the AWS Console to avoid leftover resources.
 
